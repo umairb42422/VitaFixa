@@ -1,22 +1,23 @@
-ADR-003: Database Schema, Reminder Architecture and Database Access
+# ADR-003: Database Schema, Reminder Architecture and Database Access
 
-Project: VitaFixa
-Status: Accepted (schema approved as the basis for implementation; implementation pending)
-Decision Date: 2026-11-22
-Decision Type: Data Architecture and Security
-Related Documents: ADR-001, ADR-002, PRD.md, DATABASE-DESIGN.md, API-SPECIFICATION.md, LLD.md, HLD.md, SECURITY-DESIGN.md
+- Project: VitaFixa
+- Status: Accepted (schema approved as the basis for implementation; implementation pending)
+- Decision Date: 2026-11-22
+- Decision Type: Data Architecture and Security
+- Revision: 2 (corrections after review, 2026-11-22)
+- Related Documents: ADR-001, ADR-002, PRD.md, DATABASE-DESIGN.md, API-SPECIFICATION.md, LLD.md, HLD.md, SECURITY-DESIGN.md
 
 ---
 
-1. Context
+## 1. Context
 
 DATABASE-DESIGN.md (v1.0) is a logical design. It states that exact physical tables, column types and optional relationships are finalized during implementation, and it contains gaps and conflicts with the PRD and the API specification. ADR-001 section 7 left open the Prisma and Supabase connection configuration, the migration ownership and workflow, and the database security approach. ADR-002 decided the authentication and Row Level Security (RLS) approach.
 
 This ADR records the approved physical schema for the MVP, the reminder architecture, ownership rules, database roles, migration strategy, and the resolutions of conflicts between the existing documents. It does not itself create any database object. Existing documents are not modified by this ADR; section 9 lists the updates they need.
 
-2. Decisions
+## 2. Decisions
 
-2.1 Scope
+### 2.1 Scope
 
 The MVP schema has 25 tables. These are deferred and must not be created without a new approved requirement:
 
@@ -25,34 +26,35 @@ The MVP schema has 25 tables. These are deferred and must not be created without
 - Nutrition targets storage, the calorie-formula inputs (for example sex) and any in-app notification inbox.
 - Per-set workout records.
 
-2.2 Conventions
+### 2.2 Conventions
 
 - Identifiers: UUID primary keys named "id". Identifiers never change, so no update actions are defined on foreign keys.
 - Naming: tables and columns use snake_case in PostgreSQL and camelCase fields in Prisma. Table names are plural.
 - Timestamps use time-zone-aware timestamps. Dates use the date type. Times of day use the time type.
 - Units are metric only: height in cm, weight in kg, nutrients in grams, energy in kcal. Imperial input is converted by the application. Unit columns exist only where the unit is part of the data (food portions, food reference units, goal target unit).
 - Decimals are exact. Precision: weight and height 5 digits with 2 decimals (workout weight 6,2); grams and quantities 7,2; calories 8,2.
-- A missing nutrient value means unknown, never zero.
+- A missing nutrient value means unknown, never zero. Section 2.3.4 defines which nutrients may be unknown.
 - Lifecycle values the design lists are PostgreSQL enums. Other classification values are plain text validated against one documented code-level list (section 2.8).
 
-2.2.1 Enums
+#### 2.2.1 Enums
 
-Enum| Values
-goal_status| active, completed, archived
-meal_plan_status| active, inactive, archived
-meal_type| breakfast, lunch, dinner, snack
-meal_log_status| completed, skipped
-food_source_type| database, official_source, user_entry
-workout_session_status| planned, completed, skipped, cancelled
-reminder_type| meal, workout, custom
-occurrence_status| pending, processed, cancelled, failed, suppressed
-delivery_status| attempted, sent, failed, unknown
+| Enum | Values |
+|---|---|
+| goal_status | active, completed, archived |
+| meal_plan_status | active, inactive, archived |
+| meal_type | breakfast, lunch, dinner, snack |
+| meal_log_status | completed, skipped |
+| food_source_type | database, official_source, user_entry |
+| workout_session_status | planned, completed, skipped, cancelled |
+| reminder_type | meal, workout, custom |
+| occurrence_status | pending, processed, cancelled, failed, suppressed |
+| delivery_status | attempted, sent, failed, unknown |
 
-2.3 Physical schema
+### 2.3 Physical schema
 
 Legend: every table has "id uuid" as primary key. "?" means optional; every other column is required. "ts" is a time-zone-aware timestamp; "dec(p,s)" is an exact decimal. FK = foreign key with its delete action. UQ = unique constraint. IDX = index. CHK = database check.
 
-Profile (User Profile module)
+##### Profile (User Profile module)
 
 user_profiles: authUserId uuid; displayName? text; dateOfBirth? date; heightCm? dec(5,2); activityLevel? text; timeZone? text (IANA name); createdAt ts; updatedAt ts.
 - UQ authUserId. No foreign key into the Supabase "auth" schema.
@@ -75,7 +77,7 @@ workout_availability: userId; dayOfWeek int; startTime time; endTime time.
 - CHK dayOfWeek between 1 and 7; startTime < endTime (a window cannot cross midnight).
 - UQ (userId, dayOfWeek, startTime). Several windows per day are allowed; overlaps are rejected by the backend.
 
-Food (Food Database module)
+##### Food (Food Database module)
 
 food_sources: sourceName text; sourceReference? text; sourceType food_source_type; accessedAt? date.
 
@@ -84,21 +86,24 @@ foods: name text; description? text; category text; sourceId? uuid; createdByUse
 - CHK createdByUserId IS NULL OR isVerified = false.
 - IDX name, category, createdByUserId.
 
-food_nutrition: foodId; referenceQuantity dec(7,2); referenceUnit text (g or ml); calories dec(8,2); protein dec(7,2); carbohydrates dec(7,2); fat dec(7,2); fiber? dec(7,2); createdAt ts; updatedAt ts.
+food_nutrition: foodId; referenceQuantity dec(7,2); referenceUnit text; calories dec(8,2); protein? dec(7,2); carbohydrates? dec(7,2); fat? dec(7,2); fiber? dec(7,2); createdAt ts; updatedAt ts.
 - FK foodId -> foods CASCADE. UQ foodId (one row per food). UQ (foodId, referenceUnit).
-- CHK referenceQuantity > 0; calories, protein, carbohydrates, fat and fiber >= 0.
+- CHK referenceUnit IN ('g', 'ml').
+- CHK referenceQuantity > 0; every nutrient that is present (calories, protein, carbohydrates, fat, fiber) >= 0.
+- Calories are required. Protein, carbohydrates, fat and fiber are optional, and NULL means unknown (section 2.3.4).
 
-food_portions: foodId; referenceUnit text (g or ml); portionName text; quantity dec(7,2); unit text; referenceAmount dec(7,2).
+food_portions: foodId; referenceUnit text; portionName text; quantity dec(7,2); unit text; referenceAmount dec(7,2).
 - FK foodId -> foods CASCADE.
 - FK (foodId, referenceUnit) -> food_nutrition (foodId, referenceUnit) NO ACTION. NO ACTION is used so that deleting a food, which cascades to both tables, succeeds.
 - UQ (foodId, portionName). UQ (foodId, id).
+- CHK referenceUnit IN ('g', 'ml').
 - CHK quantity > 0; referenceAmount > 0.
 - CHK unit NOT IN ('g','ml') OR (unit = referenceUnit AND referenceAmount = quantity).
 
 favorite_foods: userId; foodId; createdAt ts.
 - FK userId -> user_profiles RESTRICT. FK foodId -> foods CASCADE. UQ (userId, foodId).
 
-Nutrition (Nutrition module)
+##### Nutrition (Nutrition module)
 
 meal_plans: userId; name text; description? text; startDate date; endDate? date; status meal_plan_status (default active); createdAt ts; updatedAt ts.
 - FK userId -> user_profiles RESTRICT. UQ (userId, id). IDX (userId, status).
@@ -115,13 +120,13 @@ meal_entries: mealId; foodId; portionId; quantity dec(7,2); createdAt ts.
 meal_logs: mealId; logDate date; status meal_log_status; createdAt ts.
 - FK mealId -> meals CASCADE. UQ (mealId, logDate).
 
-food_logs: userId; foodId; portionId; quantity dec(7,2); consumedAt ts; mealType? meal_type; mealLogId? uuid; notes? text; foodNameSnapshot text; portionNameSnapshot text; caloriesSnapshot dec(8,2); proteinSnapshot dec(7,2); carbohydratesSnapshot dec(7,2); fatSnapshot dec(7,2); fiberSnapshot? dec(7,2); createdAt ts; updatedAt ts.
+food_logs: userId; foodId; portionId; quantity dec(7,2); consumedAt ts; mealType? meal_type; mealLogId? uuid; notes? text; foodNameSnapshot text; portionNameSnapshot text; caloriesSnapshot dec(8,2); proteinSnapshot? dec(7,2); carbohydratesSnapshot? dec(7,2); fatSnapshot? dec(7,2); fiberSnapshot? dec(7,2); createdAt ts; updatedAt ts.
 - FK userId -> user_profiles RESTRICT. FK (foodId, portionId) -> food_portions (foodId, id) RESTRICT. FK mealLogId -> meal_logs SET NULL.
-- CHK quantity > 0; snapshots >= 0.
+- CHK quantity > 0; every snapshot that is present >= 0.
 - IDX (userId, consumedAt), mealLogId.
-- The snapshot columns freeze the food name, portion name and nutrient totals at logging time. They are recomputed by the backend only when the user edits that log.
+- The snapshot columns freeze the food name, portion name and nutrient totals at logging time. They are recomputed by the backend only when the user edits that log. A nutrient snapshot is NULL when that nutrient was unknown at logging time.
 
-Workout (Workout module)
+##### Workout (Workout module)
 
 exercises: name text; description text; category text; difficulty text; createdAt ts. UQ name.
 
@@ -143,7 +148,7 @@ workout_exercise_records: sessionId; exerciseId; setsCompleted int; repetitionsC
 - CHK setsCompleted >= 0; repetitionsCompleted >= 0; weightKg >= 0.
 - One aggregate row per exercise per session. Per-set tracking can later be added as a child table without changing this one.
 
-Notifications (Notifications module)
+##### Notifications (Notifications module)
 
 notification_preferences: userId; mealRemindersEnabled bool (default false); workoutRemindersEnabled bool (default false); quietHoursStart? time; quietHoursEnd? time; updatedAt ts.
 - FK userId -> user_profiles RESTRICT. UQ userId.
@@ -165,58 +170,127 @@ scheduled_reminders (occurrences): reminderId; scheduledAt ts; status occurrence
 notification_deliveries: scheduledReminderId; providerReference? text; status delivery_status; attemptedAt ts; errorCode? text.
 - FK scheduledReminderId -> scheduled_reminders CASCADE. IDX scheduledReminderId.
 
-Progress (Progress module)
+##### Progress (Progress module)
 
 weight_records: userId; weightKg dec(5,2); recordedAt ts; createdAt ts.
 - FK userId -> user_profiles RESTRICT. CHK weightKg > 0. IDX (userId, recordedAt).
 
-2.3.1 Workout session status and timestamps
+#### 2.3.1 Workout session status and timestamps
 
-Status| scheduledAt| startedAt| completedAt
-planned| required| empty| empty
-completed| optional| optional| required; must not be before startedAt when startedAt is set
-skipped or cancelled| required| empty| empty
+| Status | scheduledAt | startedAt | completedAt |
+|---|---|---|---|
+| planned | required | empty | empty |
+| completed | optional | optional | required; must not be before startedAt when startedAt is set |
+| skipped or cancelled | required | empty | empty |
 
 Rescheduling a planned session changes scheduledAt. Completing a planned session keeps its scheduledAt. A workout recorded after the fact needs only completedAt. scheduledAt (the planned time) and startedAt (the actual start) are different concepts and are both kept.
 
-2.3.2 Portion conversion
+#### 2.3.2 Portion conversion
 
 Every portion states its own size in the food's nutrition reference unit (g or ml) through the required referenceAmount, and its referenceUnit must equal the food's nutrition referenceUnit (enforced by the composite foreign key). No conversion is shared between foods.
 
-Nutrient value for a logged or planned entry = nutrient value x (entry quantity x portion referenceAmount / nutrition referenceQuantity).
+Nutrient value for a logged or planned entry = nutrient value x (entry quantity x portion referenceAmount / nutrition referenceQuantity). If the nutrient value is unknown (NULL), the result is unknown (NULL).
+
+The reference unit drives this calculation, so unlike the descriptive text lists of section 2.8 it is enforced by the database: both food_nutrition.referenceUnit and food_portions.referenceUnit must be 'g' or 'ml'.
 
 A portion measured directly in g or ml must use the food's reference unit and have referenceAmount equal to its quantity. A "100 g" portion therefore cannot exist for a food whose nutrition is stated per ml, because that would need an unknown density.
 
-2.3.3 Weekday sets
+#### 2.3.3 Weekday sets
 
 A database function is_valid_weekday_set(integer[]) returns true only when the array has 1 to 7 values, every value is between 1 and 7, there are no duplicates and no NULL elements. It is declared IMMUTABLE, created before the first table that uses it, and used by meals.daysOfWeek and reminders.repeatDays. Weekdays use ISO numbering: 1 is Monday, 7 is Sunday. A meal with all seven days is a daily meal.
 
-2.4 Reminder architecture
+#### 2.3.4 Nutrient nullability
 
-- A reminders row is the rule: title, time of day, selected weekdays, a date range, and an enabled flag that defaults to false. Reminders are disabled unless the user explicitly enables them.
-- Reminder types are meal, workout and custom. A meal reminder may link to a meal, and a workout reminder may link to a workout session. Both links are optional, which also allows standalone meal and workout reminders. A custom reminder has no link.
+Rule: a nutrient value is either known (including a measured zero) or unknown (NULL). Unknown is never stored as zero.
+
+- Calories are required in food_nutrition and caloriesSnapshot in food_logs. Energy is the core MVP measure (PRD FR-NUT-003 and daily totals), so a food without an energy value is rejected when it is created, for catalogue and custom foods alike. It is never stored as zero.
+- Protein, carbohydrates, fat and fiber are optional (nullable). A user entering a custom food may know only its calories, and storing zeros would be false information.
+- A snapshot nutrient in food_logs is NULL exactly when the source nutrient was NULL at logging time.
+- API behavior matches the database. Creating or updating a custom food requires calories and accepts the other nutrients as optional. Responses return null, never 0, for unknown nutrients.
+- Daily summaries sum only known values. A nutrient total is marked incomplete when any contributing entry has an unknown value for it, so an incomplete total is never presented as exact. The exact response field is defined when the API specification is updated.
+- This departs from DATABASE-DESIGN.md sections 6.3 and 7.4, which imply that the four main nutrients are always present.
+
+### 2.4 Reminder architecture
+
+- A reminders row is the rule: title, time of day, selected weekdays, a date range and an enabled flag that defaults to false. Reminders are disabled unless the user explicitly enables them.
+- Reminder types are meal, workout and custom. A meal reminder may link to a meal, and a workout reminder may link to a workout session. A link is optional, which also allows standalone meal and workout reminders. A custom reminder has no link.
 - A one-off reminder has startDate equal to endDate. A recurring reminder has repeatDays and an optional endDate.
 - Meal and workout links are real foreign keys. Deleting the meal or session deletes its reminder. The database guarantees that the target exists, matches the reminder type and belongs to the same user.
-- When a meal or workout session is changed, the Nutrition or Workout module requests the update of the linked reminder through a Notifications module interface, in the same operation. Reminder data is not stored twice.
 - A background job creates scheduled_reminders rows (occurrences) for a short rolling window ahead. The length of the window and the queue technology are decided with the job design (LLD.md section 11). The occurrence time is the local date plus timeOfDay in the user's time zone, converted to an exact moment.
 - Duplicate occurrences are impossible because (reminderId, scheduledAt) is unique.
-- No occurrences are created when the reminder is disabled, when the user has no timeZone, or when the master switch for its type is off. Meal and workout reminders also require the matching notification_preferences switch. Custom reminders use only their own enabled flag.
-- Occurrences inside quiet hours are marked suppressed and are never sent late.
-- Changing or disabling a reminder, changing its meal time, or changing the user's time zone cancels pending occurrences and regenerates them.
-- Occurrence status values: pending, processed, cancelled, failed, suppressed. Each delivery attempt is stored in notification_deliveries. Delivery acceptance by a provider does not prove the user received the notification.
+- Occurrence status values: pending, processed, cancelled, failed, suppressed. Each delivery attempt is stored in notification_deliveries. A provider accepting a notification does not prove that the user received it.
 - Scheduling is kept separate from delivery, as API-SPECIFICATION.md section 8.8 requires.
 
-2.5 Ownership rules
+#### 2.4.1 Linked reminders follow their source
+
+A linked reminder does not keep an independent schedule. It mirrors the schedule of its meal or workout session. This satisfies PRD section 4.8: rescheduling a meal must update its reminder.
+
+- Meal-linked: timeOfDay is the meal's scheduledTime, repeatDays is the meal's daysOfWeek, and startDate and endDate are the meal plan's startDate and endDate.
+- Workout-linked: a reminder can be linked only to a session that has a scheduledAt. timeOfDay is the local time of scheduledAt in the user's time zone, repeatDays is the single ISO weekday of that local date, and startDate and endDate are that local date.
+- The mirrored values are written when the reminder is created and are overwritten by the backend in the same transaction as every change to the source. The background job therefore reads only reminders.
+- The database does not enforce that the copy equals the source. This is a backend invariant covered by an automated test: after each source change, the linked reminder equals its source.
+- For a linked reminder, the reminder API rejects edits to timeOfDay, repeatDays, startDate and endDate. The user can edit its title and its enabled flag. Standalone and custom reminders are fully editable.
+
+#### 2.4.2 What changes when a source changes
+
+| Event | Reminder row | Occurrences |
+|---|---|---|
+| Meal time or weekdays change | timeOfDay and repeatDays are overwritten from the meal, in the same transaction | All pending occurrences of that reminder are cancelled and the job regenerates them from now |
+| Meal plan start or end date changes | startDate and endDate are overwritten on every linked reminder of the plan's meals | Same as above |
+| Meal plan becomes inactive or archived | enabled is set to false on its linked reminders; reactivating the plan does not re-enable them | Pending occurrences are cancelled |
+| Meal is deleted | The reminder is deleted (cascade) | Its occurrences and deliveries are deleted (cascade) |
+| Meal is renamed | No change; the title is user-editable | None |
+| Workout session is rescheduled | timeOfDay, repeatDays, startDate and endDate are recomputed from scheduledAt in the user's time zone | Pending occurrences are cancelled and regenerated |
+| Workout session is completed, skipped or cancelled | enabled is set to false | Pending occurrences are cancelled |
+| User turns a reminder on or off | enabled changes | Off: pending occurrences are cancelled. On: the job generates them |
+| User changes time zone | No change | Pending occurrences of all the user's reminders are cancelled and regenerated; linked workout reminders are first recomputed from scheduledAt |
+| Master switch is turned off | No change | Pending occurrences of that reminder type are cancelled |
+| Master switch is turned on | No change | The job generates occurrences for enabled reminders of that type |
+| Quiet hours change | No change | None; quiet hours are checked when an occurrence is due |
+
+Occurrences that are already processed, failed, suppressed or cancelled are history. They are never altered or regenerated. "Pending" includes pending occurrences whose time has already passed.
+
+#### 2.4.3 Which switches and rules apply
+
+- Meal reminders fire only when the reminder's enabled flag is true and notification_preferences.mealRemindersEnabled is true.
+- Workout reminders fire only when the reminder's enabled flag is true and notification_preferences.workoutRemindersEnabled is true.
+- Custom reminders depend only on their own enabled flag. The meal and workout master switches never affect them.
+- For every type, the user must have a timeZone, and quiet hours apply. Quiet hours are checked when an occurrence is due, against the user's current quiet hours in local time. A due occurrence inside quiet hours is marked suppressed and is never sent late.
+- No occurrences are created for a disabled reminder, for a user without a timeZone, or for a meal or workout reminder whose master switch is off.
+
+### 2.5 Ownership rules
 
 - Directly owned (userId): user_profiles (itself), fitness_goals, food_preferences, user_allergies, workout_availability, favorite_foods, meal_plans, meals, food_logs, workout_plans, workout_sessions, notification_preferences, reminders and weight_records.
 - Owned through a parent: meal_entries and meal_logs (through meals), workout_plan_exercises (through workout plans), workout_exercise_records (through sessions), scheduled_reminders and notification_deliveries (through reminders).
 - Shared catalogue, read-only for users in the MVP: food_sources, food_portions, food_nutrition, exercises, and foods without a creator. Seed data and migrations write them.
 - A custom food (createdByUserId set) is visible only to its creator. Food queries return shared foods plus the requester's own foods.
 - Enforced by the database: a meal belongs to its plan's owner; a reminder's meal and workout session belong to the reminder's user; a workout session's plan belongs to the session's user; a portion belongs to its food and matches its nutrition reference unit.
-- Enforced by the backend, each with an automated test: a food log's mealLogId belongs to the same user; meal entries use only shared foods or the owner's custom foods; exercise records exist only for completed sessions; availability windows do not overlap; a food log's mealType matches its meal's type.
+- Enforced by the backend, each with an automated test: a food log's mealLogId belongs to the same user; food logs, meal entries and favorites reference only accessible foods (section 2.5.1); exercise records exist only for completed sessions; availability windows do not overlap; a food log's mealType matches its meal's type.
 - Per ADR-002, every repository query on user-owned data filters by the owner taken from the verified token in the same query. A request for another user's resource returns 404.
 
-2.6 Delete rules
+#### 2.5.1 Food access rule
+
+A food is accessible to a user when its createdByUserId is empty (a shared food) or equals that user's profile id (the user's own custom food).
+
+- food_logs, meal_entries and favorite_foods may reference only accessible foods. The check runs on creation and on every update that changes the food or portion.
+- A reference to another user's custom food is treated as not found (404, per ADR-002). No row is written.
+- Food search, "GET" of a food and the listing of its portions return shared foods plus the requester's own foods only.
+- The rule is one reusable check in the Food Database module's public contract. The Nutrition module calls it instead of reading food ownership itself.
+- The database cannot enforce this rule because shared foods have no owner, so it is a backend rule with required automated tests (section 2.10).
+
+#### 2.5.2 Mapping the verified token to the profile owner
+
+Tables use userId, which is user_profiles.id. The token carries the Supabase user id, which is stored in user_profiles.authUserId. The mapping is performed only by the server:
+
+- The only input is the verified "sub" claim set by the authentication guard (ADR-002 section 2.2) as request.user.authUserId.
+- A single resolver in the User Profile module looks up user_profiles by authUserId (a unique column) and returns the profile id. If no profile exists, it creates one on first authenticated use (ADR-002 section 2.6) using an insert that is safe when two requests arrive at the same time, then reads it back.
+- The profile id is resolved once per request, stored on the request context, and handed to use cases as the owner. Repositories require the owner as a parameter and apply it in the same query (section 2.5).
+- Other modules obtain the owner through that resolver's contract and never query user_profiles for it themselves.
+- No request body, query string, path parameter or header may carry an owner id or authUserId. Request objects contain no owner fields, and unknown fields are rejected. Path ids such as a meal id identify resources, never owners. "/users/me" has no user id in its path.
+- API responses do not need to expose the profile id.
+- Required tests: a request that contains another user's id in its body, query or headers is ignored or rejected and still acts only as the token's user; two different tokens never see each other's data; a first request from a new user creates exactly one profile, including when two requests arrive at once.
+
+### 2.6 Delete rules
 
 - No foreign key from user_profiles to its data cascades. All are RESTRICT, so account deletion is an explicit later feature that follows the approved retention policy. The same applies to foods.createdByUserId.
 - Cascades occur only inside a parent-child chain: meal plan to meals to entries and meal logs; workout plan to its exercises; session to exercise records; meal or session to its reminders; reminder to occurrences to deliveries; food to its nutrition, portions and favorites.
@@ -226,31 +300,32 @@ A database function is_valid_weekday_set(integer[]) returns true only when the a
 - The API's meal plan deletion archives the plan by default (status archived), because DATABASE-DESIGN.md section 17 requires previous plans to be preserved. A real deletion of plan data happens only for an explicit privacy request, and the cascade chain above supports it.
 - There is no API deletion of workout sessions; a session is cancelled or skipped instead.
 
-2.7 Database checks, functions and RLS in migrations
+### 2.7 Database checks, functions and RLS in migrations
 
 - Prisma cannot express CHECK constraints, the partial unique index on allergies, the weekday function or RLS. These are written as reviewed SQL inside the Prisma migrations.
 - RLS is enabled on every table with no permissive policies, and the Supabase data API is turned off (ADR-002 section 3.3). The backend's runtime role bypasses RLS, so backend ownership checks are the enforcement.
 - Hand-written constraints must be covered by automated tests that insert invalid data and expect rejection.
 
-2.8 Allowed values
+### 2.8 Allowed values
 
 All values below are plain text validated in one documented, code-level list shared by the API validation and the seed validators. Adding a value is a code change, not a migration. If values ever need to be managed without a release, they can be moved to lookup tables later without breaking stored data. The list is also documented in a new file, docs/database/ALLOWED-VALUES.md, created during implementation.
 
-Field| Allowed values
-goalType| weight_loss, weight_gain, weight_maintenance, muscle_gain, general_fitness
-Exercise difficulty| beginner, intermediate, advanced
-Food category| grains_and_breads, legumes_and_pulses, vegetables, fruits, meat_and_poultry, fish_and_seafood, eggs, dairy, nuts_and_seeds, fats_and_oils, beverages, sweets_and_desserts, snacks_and_fast_food, prepared_dishes, condiments_and_sauces, other
-Exercise category| strength, cardio, flexibility, mobility, balance, sports, other
-Food preference type| dietary_pattern, cuisine, disliked_food
-dietary_pattern values| omnivore, vegetarian, vegan, pescatarian, halal, kosher
-cuisine values| pakistani, south_asian, middle_eastern, mediterranean, east_asian, western, other
-disliked_food value| free text, not linked to the food catalogue
-Allergen| milk, eggs, peanuts, tree_nuts, soy, wheat, fish, shellfish, sesame, other (other requires a custom description)
-Portion unit| g, ml, piece, slice, cup, tbsp, tsp, bowl, serving
-Nutrition reference unit| g, ml
-activityLevel| Not decided. It is defined together with the calorie estimation formula.
+| Field | Allowed values |
+|---|---|
+| goalType | weight_loss, weight_gain, weight_maintenance, muscle_gain, general_fitness |
+| Exercise difficulty | beginner, intermediate, advanced |
+| Food category | grains_and_breads, legumes_and_pulses, vegetables, fruits, meat_and_poultry, fish_and_seafood, eggs, dairy, nuts_and_seeds, fats_and_oils, beverages, sweets_and_desserts, snacks_and_fast_food, prepared_dishes, condiments_and_sauces, other |
+| Exercise category | strength, cardio, flexibility, mobility, balance, sports, other |
+| Food preference type | dietary_pattern, cuisine, disliked_food |
+| dietary_pattern values | omnivore, vegetarian, vegan, pescatarian, halal, kosher |
+| cuisine values | pakistani, south_asian, middle_eastern, mediterranean, east_asian, western, other |
+| disliked_food value | free text, not linked to the food catalogue |
+| Allergen | milk, eggs, peanuts, tree_nuts, soy, wheat, fish, shellfish, sesame, other (other requires a custom description) |
+| Portion unit | g, ml, piece, slice, cup, tbsp, tsp, bowl, serving |
+| Nutrition reference unit | g, ml |
+| activityLevel | Not decided. It is defined together with the calorie estimation formula. |
 
-2.9 Database roles and connections
+### 2.9 Database roles and connections
 
 - Two dedicated roles replace the use of the default "postgres" role by the backend.
 - vitafixa_migrator owns the application tables, may create objects in the public schema, and is used only to apply migrations. In the development project it also has CREATEDB so that "prisma migrate dev" can create its temporary shadow database.
@@ -264,7 +339,7 @@ activityLevel| Not decided. It is defined together with the calorie estimation f
 - After the roles work, the "postgres" credentials are removed from the backend configuration and the "postgres" password is rotated.
 - Development, staging and production use separate Supabase projects. The Supabase service-role key is not part of the running backend configuration; it is needed only for account deletion, which is a later feature.
 
-2.10 Migration strategy
+### 2.10 Migration strategy
 
 - All schema changes are Prisma migrations committed to version control. Each migration has a single clear purpose.
 - Changes are additive first. A column or table is never renamed or dropped in the same release that stops using it. Destructive changes require explicit approval.
@@ -281,31 +356,34 @@ activityLevel| Not decided. It is defined together with the calorie estimation f
   7. Notification tables.
   8. Seed data.
 - Seed data is reviewed and version controlled. It uses fixed UUIDs so it can be re-run safely, and only reviewed catalogue rows are marked verified. Seed data is loaded with the migration role. The source of the Pakistani and international food data and its licensing must be recorded in food_sources.
-- Required tests: migrations apply to an empty database; invalid data is rejected by each CHECK, unique and foreign key rule; the weekday function accepts and rejects the cases in section 2.3.3 (including NULL elements); RLS denies the client-facing roles; ownership tests return 404 for another user's data on every user-owned endpoint.
+- Required tests: migrations apply to an empty database; invalid data is rejected by each CHECK, unique and foreign key rule; the weekday function accepts and rejects the cases in section 2.3.3 (including NULL elements); RLS denies the client-facing roles; ownership tests return 404 for another user's data on every user-owned endpoint; food access tests (below); token-to-profile mapping tests (section 2.5.2); nutrient nullability tests (section 2.3.4); referenceUnit CHECK tests; reminder mirroring tests (section 2.4.1).
+- Food access tests: user A creates a custom food. User B creating or updating a food log, a meal entry or a favorite with it gets 404 and no row is written. User B's food search, food lookup and portions lookup never return it. Shared foods and the user's own custom foods work for creation and update. User A's existing logs that use A's own custom food remain readable.
 
-2.11 API behavior resolutions
+### 2.11 API behavior resolutions
 
-- Reminder endpoints keep their shape and gain the type "custom", optional mealId and workoutSessionId, optional start and end dates, and enabled defaulting to false. The in-app notification inbox ("mark as read") is deferred; it is not in the PRD. FR-NOT-007 (respond to reminders) is deferred.
+- Reminder endpoints keep their shape and gain the type "custom", optional mealId and workoutSessionId, optional start and end dates, and enabled defaulting to false. The in-app notification inbox ("mark as read") is deferred; it is not in the PRD. FR-NOT-007 (respond to reminders) is deferred. For linked reminders the schedule fields are read-only (section 2.4.1).
 - Goals: the combined goal view saves a fitness goal row (replace archives the previous active goal), stores the weight target in kilograms and updates the profile activity level. Daily calorie and macro targets are computed on demand once the formula is chosen and are not stored.
 - The workout session keeps both scheduledAt and startedAt (section 2.3.1). The unused daysPerWeek field is dropped.
 - The meal example uses daysOfWeek (a list) instead of dayOfWeek, and includes mealType. Weekly meal schedules are an MVP requirement because the API already carries the day.
 - Food endpoints require authentication because custom foods are private.
 - Profile weight is saved as a weight_records entry, not as a profile column.
+- Custom foods require calories; other nutrients are optional and returned as null when unknown. Daily summaries mark incomplete nutrient totals (section 2.3.4).
 
-3. Alternatives Considered
+## 3. Alternatives Considered
 
-Area| Selected| Alternatives
-Reminder target| Typed foreign keys with same-user enforcement| One polymorphic relatedEntityId without database checks
-Standalone reminders| One reminders rule table with optional links| Reminder switches on meals and sessions only
-Recurrence| Weekday list plus date range| Cron-style rules; one row per day
-Weekday storage| integer[] with a validating function| One row per day; bitmask
-Portion conversion| Required referenceAmount per portion plus composite unit link| Optional gram equivalent; shared conversion tables
-Allowed values| Validated text in one code list| Enums for all values; lookup tables
-Workout plan delete| RESTRICT with a two-step transaction| SET NULL with a trigger
-Database roles| Separate runtime and migration roles| Single role; default postgres role
-Migration authoring| Development Supabase project| Local PostgreSQL (not yet installed)
+| Area | Selected | Alternatives |
+|---|---|---|
+| Reminder target | Typed foreign keys with same-user enforcement | One polymorphic relatedEntityId without database checks |
+| Standalone reminders | One reminders rule table with optional links | Reminder switches on meals and sessions only |
+| Recurrence | Weekday list plus date range | Cron-style rules; one row per day |
+| Weekday storage | integer[] with a validating function | One row per day; bitmask |
+| Portion conversion | Required referenceAmount per portion plus composite unit link | Optional gram equivalent; shared conversion tables |
+| Allowed values | Validated text in one code list | Enums for all values; lookup tables |
+| Workout plan delete | RESTRICT with a two-step transaction | SET NULL with a trigger |
+| Database roles | Separate runtime and migration roles | Single role; default postgres role |
+| Migration authoring | Development Supabase project | Local PostgreSQL (not yet installed) |
 
-4. Consequences
+## 4. Consequences
 
 Positive
 
@@ -323,64 +401,67 @@ Trade-offs and limitations
 - Allowed values are validated in code, not by the database.
 - The migration approach uses the development project until a local or CI PostgreSQL exists.
 
-5. Items Still Open
+## 5. Items Still Open
 
 1. Length of the reminder rolling window, queue technology, and the handling of occurrences missed while the job was unavailable.
 2. Whether only one active fitness goal per user is enforced.
 3. Calorie estimation formula, its input fields (such as sex) and the activityLevel values.
 4. Account deletion and data retention policy.
-5. Access control for the health endpoints "/health/ready" and "/health/live".
+5. Access control for the future endpoints "/api/v1/health/ready" and "/api/v1/health/live", which are not yet implemented. The implemented route is "GET /api/v1/health" and it is public.
 6. Error response format (LLD.md section 8 and API-SPECIFICATION.md section 6 differ).
 7. Web and mobile session storage, access token lifetime and email verification (ADR-002 section 6).
 8. Source and licensing of the initial food and exercise catalogues.
 9. Whether to add archiving for foods in use.
+10. The exact API field that marks an incomplete nutrient total.
 
-6. Documentation Impact
+## 6. Documentation Impact
 
 ADR-001 section 7 items "Prisma connection configuration with Supabase", "Database migration ownership and workflow" and "Database security and Row Level Security policies" are resolved by this ADR (together with ADR-002). Hosting and deployment configuration remains open. ADR-001 itself is not changed by this ADR.
 
-7. Documentation Conflicts and Required Updates
+## 7. Documentation Conflicts and Required Updates
 
 The existing documents have not been edited. Updating them requires separate approval and is planned as one documentation-only commit after this ADR. The exact updates are:
 
-Document and section| Conflict| Required update
-PRD 4.2 (FR-PRO-010)| "Workout availability" is undefined.| Define it as weekly time windows, several per day, each with a start and end time.
-PRD 4.5 (FR-MEAL-010)| Repeating schedules are only a "should".| State that selected weekdays are an MVP requirement.
-PRD 4.8| No custom reminders, recurrence or default state.| Add custom reminders, recurrence on selected days, reminders disabled by default, quiet hours that skip reminders instead of delaying them. Mark FR-NOT-007 as a later feature.
-PRD 4.1| Registration, login, logout and recovery are phrased as backend functions.| Add a note that Supabase Auth provides them and the backend verifies tokens (ADR-002).
-API 5 and 8.1| Health "ready" and "live" are "Internal/authorized" without a mechanism.| Keep open until decided; note default-deny and @Public for "/health" (ADR-002).
-API 8.2| Profile example has weightKg and no timeZone or activityLevel.| Add timeZone and activityLevel; state that weight creates a weight record.
-API 8.3| Goal example combines primaryGoal, targetWeightKg and activityLevel; allergies are free text.| Document the mapping in section 2.11; list allowed goal types and allergen codes.
-API 8.4| Foods are "Public or authenticated".| Require authentication; document portion fields referenceAmount and referenceUnit.
-API 8.5| Meal example has dayOfWeek and no mealType; DELETE plan implies hard deletion.| Use daysOfWeek (list) and mealType; state that DELETE archives by default.
-API 8.6| No endpoints to complete, skip or replace a meal.| Add meal log endpoints; allow mealType and mealLogId on food logs.
-API 8.7| Session has startedAt only; workout plan has daysPerWeek; no availability endpoints.| Add scheduledAt, keep startedAt and completedAt, remove daysPerWeek, add workout availability endpoints, describe plan deletion.
-API 8.8| Reminder type lacks custom; inbox has no requirement.| Add custom, optional links and dates, enabled default false; remove or defer the inbox endpoints.
-API 6 and LLD 8| Different error response structures.| Choose one structure (still open).
-DATABASE-DESIGN 3, 4| Entity list and ERD omit Reminder, WorkoutAvailability and MealLog.| Add them and the new relationships.
-DATABASE-DESIGN 5.1| heightValue and heightUnit; no timeZone or displayName.| heightCm, timeZone and displayName.
-DATABASE-DESIGN 5.4| Allergies are free text.| Standard allergen list with a custom description for "other".
-DATABASE-DESIGN 6.2, 6.3| gramEquivalent is optional; several nutrition rows per food.| Required referenceAmount and referenceUnit; one nutrition row per food.
-DATABASE-DESIGN 7.2, 7.4| Meal lacks userId and daysOfWeek; FoodLog lacks mealType, mealLogId and snapshots.| Add them as specified in section 2.3.
-DATABASE-DESIGN 8.4, 8.5| WorkoutSession has scheduledAt only; weight has a unit column.| Add startedAt, optional timestamps and the status rules; use weightKg.
-DATABASE-DESIGN 9.1, 9.2| timeZone sits in NotificationPreference; ScheduledReminder uses relatedEntityId and userId.| Move timeZone to the profile; add Reminder; occurrences link to a reminder.
-DATABASE-DESIGN 3.6, 10.2, 11| ProgressGoal and Research tables are listed as initial entities.| Mark them as deferred.
-DATABASE-DESIGN 12, 13, 15| UUIDs, units and indexes are recommendations or options.| Record the approved conventions and index list.
-DATABASE-DESIGN 16| Expects per-user RLS policies.| Describe RLS deny-by-default with the data API off (ADR-002 and this ADR).
-LLD 2 and TECHNICAL-ARCHITECTURE 7| Folder tree shows "docs/decisions/"; the ADRs are in "docs/architecture/DECISIONS/".| Correct the path.
-LLD 5.1| Identity lists register, authenticate and log out.| Supabase Auth owns them; Identity holds token verification, the guard and the Supabase adapter.
-LLD 5.6 (Notifications)| Conceptual models lack Reminder.| Add Reminder as the rule and ScheduledReminder as the occurrence.
-LLD 9| No database role or connection guidance.| Add the two roles and DATABASE_URL and DIRECT_URL.
-TECHNICAL-ARCHITECTURE 8| Lists "/api/v1/auth".| Remove it.
-TECHNICAL-ARCHITECTURE 2.4 and 9| RLS "additional protection" is vague; entity list is incomplete.| Reference ADR-002 and this ADR.
-SECURITY-DESIGN 5.1| Logout "must invalidate" the session.| Note the access token expiry limitation and the recheck for sensitive operations (ADR-002).
-SECURITY-DESIGN 5.3 and 11| Session strategy undecided; "JWT-related secrets".| Note the Bearer-only API and that no JWT secret is stored.
-SECURITY-DESIGN 7.1 and 7.3| Per-user RLS policies; generic database access.| Align with RLS deny-by-default and the two database roles.
-HLD 6.4| Meal reminder flow does not mention the reminder rule.| Add the Reminder rule and occurrence steps.
-TESTING-STRATEGY 7| No schema or migration tests.| Add migration, constraint, RLS and ownership tests (section 2.10).
-ADR-001 7| Lists items now resolved.| Add a forward note: amended by ADR-002 and ADR-003.
+| Document and section | Conflict | Required update |
+|---|---|---|
+| PRD 4.2 (FR-PRO-010) | "Workout availability" is undefined. | Define it as weekly time windows, several per day, each with a start and end time. |
+| PRD 4.5 (FR-MEAL-010) | Repeating schedules are only a "should". | State that selected weekdays are an MVP requirement. |
+| PRD 4.8 | No custom reminders, recurrence or default state. | Add custom reminders, recurrence on selected days, reminders disabled by default, quiet hours that skip reminders instead of delaying them, and linked meal and workout reminders that follow their meal or session. Mark FR-NOT-007 as a later feature. |
+| PRD 4.1 | Registration, login, logout and recovery are phrased as backend functions. | Add a note that Supabase Auth provides them and the backend verifies tokens (ADR-002). |
+| API 5 and 8.1 | "/health" is written relative to the base path, and "/health/ready" and "/health/live" are "Internal/authorized" without a mechanism. | State the full implemented route "GET /api/v1/health" (public, marked @Public per ADR-002). Mark "/api/v1/health/ready" and "/api/v1/health/live" as not yet implemented until their access mechanism is decided. |
+| API 8.2 | Profile example has weightKg and no timeZone or activityLevel. | Add timeZone and activityLevel; state that weight creates a weight record. |
+| API 8.3 | Goal example combines primaryGoal, targetWeightKg and activityLevel; allergies are free text. | Document the mapping in section 2.11; list allowed goal types and allergen codes. |
+| API 8.4 | Foods are "Public or authenticated". | Require authentication; document portion fields referenceAmount and referenceUnit; calories are required for custom foods and other nutrients return null when unknown. |
+| API 8.5 | Meal example has dayOfWeek and no mealType; DELETE plan implies hard deletion. | Use daysOfWeek (list) and mealType; state that DELETE archives by default. |
+| API 8.6 | No endpoints to complete, skip or replace a meal. | Add meal log endpoints; allow mealType and mealLogId on food logs; daily summaries mark a nutrient total incomplete when any entry has an unknown value. |
+| API 8.7 | Session has startedAt only; workout plan has daysPerWeek; no availability endpoints. | Add scheduledAt, keep startedAt and completedAt, remove daysPerWeek, add workout availability endpoints, describe plan deletion. |
+| API 8.8 | Reminder type lacks custom; inbox has no requirement. | Add custom, optional links and dates, enabled default false; state that schedule fields of linked reminders are read-only; remove or defer the inbox endpoints. |
+| API 6 and LLD 8 | Different error response structures. | Choose one structure (still open). |
+| DATABASE-DESIGN 3, 4 | Entity list and ERD omit Reminder, WorkoutAvailability and MealLog. | Add them and the new relationships. |
+| DATABASE-DESIGN 5.1 | heightValue and heightUnit; no timeZone or displayName. | heightCm, timeZone and displayName. |
+| DATABASE-DESIGN 5.4 | Allergies are free text. | Standard allergen list with a custom description for "other". |
+| DATABASE-DESIGN 6.2, 6.3 | gramEquivalent is optional; several nutrition rows per food. | Required referenceAmount and referenceUnit with a CHECK limiting referenceUnit to g or ml; one nutrition row per food; calories required and the other nutrients nullable (NULL means unknown). |
+| DATABASE-DESIGN 7.2, 7.4 | Meal lacks userId and daysOfWeek; FoodLog lacks mealType, mealLogId and snapshots. | Add them as specified in section 2.3, with nullable protein, carbohydrates, fat and fiber snapshots. |
+| DATABASE-DESIGN 8.4, 8.5 | WorkoutSession has scheduledAt only; weight has a unit column. | Add startedAt, optional timestamps and the status rules; use weightKg. |
+| DATABASE-DESIGN 9.1, 9.2 | timeZone sits in NotificationPreference; ScheduledReminder uses relatedEntityId and userId. | Move timeZone to the profile; add Reminder, whose linked reminders mirror their meal or session schedule; occurrences link to a reminder. |
+| DATABASE-DESIGN 3.6, 10.2, 11 | ProgressGoal and Research tables are listed as initial entities. | Mark them as deferred. |
+| DATABASE-DESIGN 12, 13, 15 | UUIDs, units and indexes are recommendations or options. | Record the approved conventions and index list. |
+| DATABASE-DESIGN 16 | Expects per-user RLS policies. | Describe RLS deny-by-default with the data API off (ADR-002 and this ADR). |
+| LLD 2 and TECHNICAL-ARCHITECTURE 7 | Folder tree shows "docs/decisions/"; the ADRs are in "docs/architecture/DECISIONS/". | Correct the path. |
+| LLD 5.1 | Identity lists register, authenticate and log out. | Supabase Auth owns them; Identity holds token verification, the guard and the Supabase adapter. Add the token-to-profile owner mapping (section 2.5.2) and the food access rule (section 2.5.1). |
+| LLD 5.6 (Notifications) | Conceptual models lack Reminder. | Add Reminder as the rule and ScheduledReminder as the occurrence. |
+| LLD 9 | No database role or connection guidance. | Add the two roles and DATABASE_URL and DIRECT_URL. |
+| TECHNICAL-ARCHITECTURE 8 | Lists "/api/v1/auth". | Remove it. |
+| TECHNICAL-ARCHITECTURE 2.4 and 9 | RLS "additional protection" is vague; entity list is incomplete. | Reference ADR-002 and this ADR. |
+| SECURITY-DESIGN 5.1 | Logout "must invalidate" the session. | Note the access token expiry limitation and the recheck for sensitive operations (ADR-002). |
+| SECURITY-DESIGN 6.1 | Ownership rules do not say how an account maps to the owner of records. | Add that the owner is resolved on the server from the verified token and never from client input (section 2.5.2). |
+| SECURITY-DESIGN 5.3 and 11 | Session strategy undecided; "JWT-related secrets". | Note the Bearer-only API and that no JWT secret is stored. |
+| SECURITY-DESIGN 7.1 and 7.3 | Per-user RLS policies; generic database access. | Align with RLS deny-by-default and the two database roles. |
+| HLD 6.4 | Meal reminder flow does not mention the reminder rule. | Add the Reminder rule and occurrence steps. |
+| TESTING-STRATEGY 7 | No schema or migration tests. | Add migration, constraint, RLS and ownership tests (section 2.10). |
+| ADR-001 7 | Lists items now resolved. | Add a forward note: amended by ADR-002 and ADR-003. |
 
-8. Review Conditions
+## 8. Review Conditions
 
 This decision should be reviewed if direct client access to the database is introduced, if the number of reminder types grows beyond what optional links handle simply, if a local or CI PostgreSQL changes the migration workflow, if production load requires partitioning or a separate job service, or if the retention policy changes the deletion rules.
 
