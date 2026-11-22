@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { Public } from '../decorators/public.decorator';
 
 /**
  * Basic public health check: GET /api/v1/health (API-SPECIFICATION.md section 8.1).
@@ -6,6 +7,7 @@ import { Controller, Get } from '@nestjs/common';
  * /health/ready and /health/live are not implemented: the spec marks them
  * "Internal/authorized" and authentication does not exist yet.
  */
+@Public()
 @Controller('health')
 export class HealthController {
   @Get()

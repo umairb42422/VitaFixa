@@ -11,6 +11,10 @@ import { UserProfileModule } from '../src/modules/user-profile/user-profile.modu
 import { WorkoutModule } from '../src/modules/workout/workout.module';
 
 describe('AppModule', () => {
+  beforeAll(() => {
+    process.env.SUPABASE_URL = 'https://test-project.supabase.co';
+  });
+
   it('compiles and registers all nine business modules', async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     const imports: unknown[] = Reflect.getMetadata('imports', AppModule);

@@ -26,6 +26,13 @@ Each module uses four layers (inner layers never import outer ones):
 Application shell: `src/main.ts` (global prefix `api/v1`, port from `PORT`, default 3000), `src/app.module.ts`
 (imports the nine empty module classes plus `common/health`). Each `*.module.ts` is an empty placeholder.
 
+Authentication (ADR-002): `IdentityModule` registers a global `AuthenticationGuard`. Every route requires
+`Authorization: Bearer <Supabase access token>` unless marked `@Public()` (`src/common/decorators`). Tokens are
+verified locally with `jose` against the project's JWKS (`SupabaseAuthAdapter`); signature, expiry, issuer, audience
+`authenticated` and `sub` are checked, only ES256/RS256 are accepted. The guard sets `request.user.authUserId`.
+Sign-up, login and logout stay in Supabase Auth. No roles. Requires `SUPABASE_URL` (no secret); the API refuses to
+start without it.
+
 Endpoint: `GET /api/v1/health` returns `{ "status": "ok" }` (public). `/health/ready` and `/health/live` are
 specified as internal/authorized and are deferred until authentication exists.
 
