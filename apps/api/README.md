@@ -46,10 +46,13 @@ pnpm prisma:validate
 pnpm test:structure     # works offline
 ```
 
+## Approved decisions
+
+- **Prisma 6** (approved by the project owner, 2026-11-22). Both `prisma` and `@prisma/client` use the range `^6.0.0`, so Prisma 7 cannot be installed by accident. Do not move to Prisma 7 without an ADR. The exact resolved 6.x version is not yet known: it is fixed by the lockfile created on the first `pnpm install`.
+
 ## Unresolved decisions (need human approval, not invented here)
 
-1. **Prisma major version.** Neither ADR-001 nor DATABASE-DESIGN.md names one. `^6` is a provisional placeholder awaiting approval (see the Task 4 report). Not installed or validated: no network, no lockfile.
-1a. **NestJS/Jest/TypeScript versions** (`^11`, `^29`, `^5.7`) are unverified placeholders; the docs name the products, not versions. Nothing has been installed or compiled yet.
+1. **NestJS/Jest/TypeScript versions** (`^11`, `^29`, `^5.7`) are unverified placeholders; the docs name the products, not versions. Nothing has been installed or compiled yet.
 1b. **Health controller location** (`src/common/health/`) is my choice; the LLD has no health folder.
 2. **Supabase connection setup.** ADR-001 section 7 leaves it open: pooled vs direct URL (`directUrl`) for migrations, SSL, and shadow database.
 3. **Migration ownership/workflow** (who runs migrations, staging/production process, rollback).
