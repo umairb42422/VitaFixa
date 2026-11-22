@@ -1028,4 +1028,4 @@ Final Database Principle
 
 VitaFixa's database must protect user information, maintain reliable history and support future growth.
 
-Every entity must have a clear purpose, every relationship must be intentional and every schema change must be controll
+Every entity must have a clear purpose, every relationship must be intentional and every schema change must be controlled.
