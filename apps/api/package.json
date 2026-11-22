@@ -1,0 +1,20 @@
+{
+  "name": "@vitafixa/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VitaFixa backend API (NestJS modular monolith). Database foundation only; no business features yet.",
+  "scripts": {
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:status": "prisma migrate status",
+    "test:structure": "sh test/check-structure.sh"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.0.0"
+  }
+}

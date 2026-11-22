@@ -1,0 +1,18 @@
+// VitaFixa Prisma schema - FOUNDATION ONLY.
+//
+// Source of truth: docs/database/DATABASE-DESIGN.md (logical design, v1.0).
+// That document states that exact physical tables, column types and optional
+// relationships are "finalized during implementation". Those decisions have not
+// been approved yet, so NO models are defined here. See apps/api/README.md,
+// section "Unresolved decisions".
+//
+// Models must be added through reviewed Prisma migrations only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
