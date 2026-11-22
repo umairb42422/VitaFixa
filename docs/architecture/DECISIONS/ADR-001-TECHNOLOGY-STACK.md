@@ -37,7 +37,7 @@ Backend language| TypeScript
 Architecture| Modular Monolith
 Database| PostgreSQL
 Database platform| Supabase
-ORM| Prisma
+ORM| Prisma 6
 Authentication| Supabase Auth
 File storage| Supabase Storage
 API style| REST API
@@ -49,6 +49,8 @@ Web deployment| Vercel (proposed)
 CI/CD| GitHub Actions
 
 Specific hosting and deployment arrangements may be refined before production implementation.
+
+Amendment (2026-11-22): Prisma 6 is the approved ORM major version. Moving to Prisma 7 or any other major version requires a new ADR.
 
 3. Reasons for Selection
 
