@@ -4,6 +4,7 @@ Software Architecture & Technology Blueprint
 
 Document Version: 1.0
 Status: Initial Technical Baseline
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 Product Category: Fitness, Nutrition & Wellness Platform
 Target Platforms: Web, Android and iOS
 Architecture Style: Modular Monolith, Clean Architecture and Domain-Driven Design
@@ -146,7 +147,7 @@ Important architectural rule:
 
 The backend API will be the main entry point for business operations. Frontend applications must not directly bypass backend business rules to modify application data.
 
-Database access policies and Row Level Security will provide additional protection.
+Row Level Security is enabled on every table with no permissive policies, and the Supabase data API is off. The backend's runtime database role bypasses RLS, so backend ownership checks are the enforcement (ADR-002 and ADR-003).
 
 3. Overall System Architecture
 
@@ -470,11 +471,11 @@ vitafixa/
 ├── docs/
 │   ├── requirements/
 │   ├── architecture/
+│   │   └── DECISIONS/
 │   ├── database/
 │   ├── api/
 │   ├── security/
-│   ├── testing/
-│   └── decisions/
+│   └── testing/
 │
 ├── infrastructure/
 │   ├── database/
@@ -495,11 +496,12 @@ The exact module folder structure will be defined in the detailed architecture d
 
 Web and mobile applications will communicate with the same backend API.
 
+Authentication is handled by Supabase Auth directly from the clients, so the API has no authentication endpoints. The API accepts a Supabase access token as a Bearer token and verifies it on the backend (ADR-002).
+
 We will initially use REST APIs.
 
 Example endpoint structure:
 
-/api/v1/auth
 /api/v1/users
 /api/v1/nutrition
 /api/v1/foods
@@ -537,6 +539,8 @@ Requirements:
 - Audit fields where useful.
 
 We will design the ERD before implementing the database.
+
+The approved MVP schema (25 tables), its conventions, delete rules, database roles and migration strategy are recorded in ADR-003 and detailed in DATABASE-DESIGN.md. Progress goals and Research Centre tables are deferred.
 
 Important entities will include:
 

@@ -4,6 +4,7 @@ Low-Level Design (LLD)
 
 Document Version: 1.0
 Status: Initial Detailed Design Baseline
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 Product: VitaFixa
 Related Documents:
 
@@ -81,11 +82,11 @@ vitafixa/
 ├── docs/
 │   ├── requirements/
 │   ├── architecture/
+│   │   └── DECISIONS/
 │   ├── database/
 │   ├── api/
 │   ├── security/
-│   ├── testing/
-│   └── decisions/
+│   └── testing/
 │
 ├── infrastructure/
 │   ├── database/
@@ -266,12 +267,11 @@ Responsibility: Handle identity-related application operations and integrate wit
 
 Main operations:
 
-- Register account.
-- Authenticate user.
-- Log out.
-- Recover account access.
-- Verify identity.
-- Handle account deletion requests.
+- Verify access tokens.
+- Provide the authenticated identity to other modules.
+- Handle account deletion requests (a later feature).
+
+Supabase Auth owns registration, login, logout and account recovery. Clients call Supabase Auth directly, and the backend exposes no authentication endpoints (ADR-002). The Identity module holds token verification, the global authentication guard and the Supabase adapter.
 
 Important components:
 
@@ -289,6 +289,16 @@ Security requirements:
 - Enforce authorization independently of authentication.
 
 Supabase Auth remains the identity provider. The backend is responsible for protecting application resources.
+
+Token-to-profile owner mapping (ADR-003 section 2.5.2):
+
+- The only input is the verified "sub" claim, which the guard places on the request as request.user.authUserId.
+- A single resolver in the User Profile module looks up user_profiles by authUserId and returns the profile id (userId). If no profile exists, it creates one on first authenticated use with an insert that is safe when two requests arrive at once.
+- The profile id is resolved once per request and passed to use cases as the owner. Repositories require the owner and apply it in the same query.
+- Other modules obtain the owner through the resolver's contract and never query user_profiles themselves.
+- No request body, query string, path parameter or header may carry an owner id.
+
+Food access rule (ADR-003 section 2.5.1): a food is accessible to a user when it is shared (no creator) or created by that user. The Food Database module exposes one reusable check in its public contract, and the Nutrition module calls it for food logs, meal entries and favorites. A reference to another user's custom food is treated as not found.
 
 5.2 User Profile Module
 
@@ -426,8 +436,9 @@ Main operations:
 Conceptual domain models:
 
 - NotificationPreference.
-- ScheduledReminder.
-- NotificationDelivery.
+- Reminder: the rule (type, title, time of day, selected weekdays, date range, enabled flag and an optional link to a meal or workout session). Custom reminders have no link.
+- ScheduledReminder: one dated occurrence generated from a Reminder.
+- NotificationDelivery: one delivery attempt for an occurrence.
 
 Important rules:
 
@@ -436,7 +447,13 @@ Important rules:
 - Duplicate scheduling must be prevented.
 - Disabled notifications must not be sent.
 - Schedule changes must update associated reminders.
+- Reminders are disabled by default.
+- A linked reminder mirrors the schedule of its meal or workout session. The backend overwrites the mirrored fields in the same transaction as the source change and regenerates pending occurrences.
+- Custom reminders depend only on their own enabled flag, not on the meal or workout switches.
+- An occurrence that is due inside quiet hours is marked suppressed and is not sent later.
 - External provider failures must be handled safely.
+
+The reminder lifecycle (what changes when a meal, plan, session, time zone or switch changes) is defined in ADR-003 sections 2.4.1 to 2.4.3.
 
 Reminder delivery should use background processing rather than blocking ordinary API requests.
 
@@ -612,10 +629,11 @@ Potential fields:
 
 - id
 - foodId
+- referenceUnit (g or ml)
 - portionName
 - quantity
 - unit
-- gramEquivalent
+- referenceAmount (portion size in the reference unit)
 
 7.4 Nutritional Information
 
@@ -630,7 +648,7 @@ Potential fields:
 - fat
 - additionalNutrients
 
-The final nutrient representation and reference quantity must be defined in database design.
+The final nutrient representation and reference quantity must be defined in database design. The approved representation (ADR-003): one nutrition row per food, referenceQuantity and referenceUnit (g or ml), calories required and the other nutrients optional, where NULL means unknown.
 
 7.5 Meal Plan
 
@@ -807,6 +825,17 @@ Requirements:
 - Database queries must be monitored.
 - Sensitive records must have appropriate access restrictions.
 
+Database roles and connections (ADR-003 section 2.9):
+
+- vitafixa_app is the runtime role. It reads and writes application tables, cannot change the schema and has no access to the Supabase auth schema.
+- vitafixa_migrator owns the application tables and is used only to apply migrations.
+- DATABASE_URL is the runtime connection through the Supabase transaction pooler (port 6543, pgbouncer=true) using vitafixa_app.
+- DIRECT_URL is the migration connection (direct connection, or the session pooler on port 5432 if required) using vitafixa_migrator. The transaction pooler is never used for migrations.
+- The Prisma datasource declares both (url and directUrl). TLS is required.
+- The roles are created by a reviewed script that the project owner executes. Code must not assume they exist until the owner confirms.
+
+Because the runtime role bypasses RLS (ADR-002), every repository query on user-owned data must filter by the owner in the same query.
+
 Important implementation rule:
 
 Do not expose Prisma database models directly as public API response objects.
@@ -834,7 +863,8 @@ Important rules:
 - User ownership must be checked on the backend.
 - Administrative permissions must be restricted.
 - Frontend-supplied user IDs must never be trusted as proof of ownership.
-- Database policies must provide appropriate additional protection.
+- Row Level Security is enabled with no permissive policies and the Supabase data API is off (ADR-002, ADR-003). The runtime role bypasses RLS, so backend ownership checks are the enforcement.
+- A request for another user's resource returns 404.
 - Service role credentials must remain server-side.
 
 ---

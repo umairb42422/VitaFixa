@@ -4,6 +4,7 @@ Document: API Specification
 Project: VitaFixa
 Version: 1.0
 Status: Initial Design
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 API Style: RESTful JSON API
 Base Path: "/api/v1"
 
@@ -93,6 +94,10 @@ Rules
 - Never trust a user ID supplied by the frontend as proof of ownership.
 - Admin-only operations require additional role-based authorization.
 - Service-role keys and private secrets must never be exposed to frontend applications.
+- Sign-up, login, logout and password recovery are performed by the client directly with Supabase Auth. The backend exposes no authentication endpoints (ADR-002).
+- Every route requires a valid access token unless it is explicitly marked public (default-deny).
+- The owner of user data is resolved on the server from the validated token. Request bodies, query strings, paths and headers never carry an owner id, and unknown request fields are rejected.
+- A request for another user's resource returns 404 Not Found, the same response as for a resource that does not exist. 403 Forbidden is reserved for function-level permission failures.
 
 Authorization levels
 
@@ -189,12 +194,16 @@ They are proposed contracts, not a statement that all endpoints already exist.
 
 8.1 Health and System
 
+Paths in this section are relative to the base path "/api/v1". The implemented route is "GET /api/v1/health", which is public.
+
 Method| Endpoint| Access| Purpose
 GET| "/health"| Public| Basic service health
 GET| "/health/ready"| Internal/authorized| Check service readiness
 GET| "/health/live"| Internal/authorized| Check whether the application is running
 
 Health endpoints must not expose secrets, private configuration, or detailed infrastructure information.
+
+"/health/ready" and "/health/live" are not yet implemented. Their access mechanism is still to be decided.
 
 8.2 User Profile
 
@@ -211,7 +220,9 @@ Example profile update:
   "displayName": "Alex",
   "dateOfBirth": "2000-05-10",
   "heightCm": 175,
-  "weightKg": 75
+  "weightKg": 75,
+  "activityLevel": "moderately_active",
+  "timeZone": "Asia/Karachi"
 }
 
 Rules:
@@ -220,7 +231,10 @@ Rules:
 - Use consistent measurement units.
 - Do not allow users to update another user's profile.
 - Account deletion must follow the defined deletion and retention policy.
-- Do not treat profile weight as a replacement for historical weight records.
+- Do not treat profile weight as a replacement for historical weight records. A weightKg value in a profile update is recorded as a new weight record and is not stored as a profile column.
+- timeZone is an IANA time zone name. It is used for daily summaries and reminders, and reminders cannot be scheduled until it is set.
+- The profile is created on the user's first authenticated request. Profile fields are optional until onboarding is complete.
+- Age is validated from dateOfBirth. The initial audience is adults.
 
 8.3 User Goals and Preferences
 
@@ -244,14 +258,25 @@ Example goal:
 
 Goal values must be validated against supported options.
 
+Rules:
+
+- primaryGoal is stored as the user's active goal. Replacing goal settings archives the previous active goal instead of deleting it.
+- targetWeightKg is stored as the goal's target value in kilograms.
+- activityLevel updates the user's profile. Its allowed values are defined together with the calorie estimation method.
+- Daily calorie and macronutrient targets are calculated on demand once the calculation method is approved. They are not stored.
+- Goal types: weight_loss, weight_gain, weight_maintenance, muscle_gain, general_fitness.
+- Preference types: dietary_pattern (omnivore, vegetarian, vegan, pescatarian, halal, kosher), cuisine (pakistani, south_asian, middle_eastern, mediterranean, east_asian, western, other) and disliked_food (free text).
+- Allergies use one of: milk, eggs, peanuts, tree_nuts, soy, wheat, fish, shellfish, sesame, other. The value other requires a custom description.
+- Allowed values are validated by the backend from one documented list, so new values can be added without changing the database.
+
 8.4 Food Database
 
 Base path: "/foods"
 
 Method| Endpoint| Access| Purpose
-GET| "/foods"| Public or authenticated| Search and list foods
-GET| "/foods/:foodId"| Public or authenticated| Retrieve food details
-GET| "/foods/:foodId/portions"| Public or authenticated| Retrieve available portions
+GET| "/foods"| Authenticated| Search and list foods
+GET| "/foods/:foodId"| Authenticated| Retrieve food details
+GET| "/foods/:foodId/portions"| Authenticated| Retrieve available portions
 GET| "/users/me/favorite-foods"| Authenticated| Retrieve favorite foods
 POST| "/users/me/favorite-foods/:foodId"| Authenticated| Add a favorite
 DELETE| "/users/me/favorite-foods/:foodId"| Authenticated| Remove a favorite
@@ -268,7 +293,7 @@ Example food response:
     {
       "id": "food-001",
       "name": "Chicken Breast",
-      "category": "protein",
+      "category": "meat_and_poultry",
       "servingSize": 100,
       "servingUnit": "g",
       "nutritionPer100g": {
@@ -294,6 +319,12 @@ Rules:
 - Never assume different foods have identical nutritional values.
 - Validate portion units and conversions.
 - Food search must support future localization and regional foods.
+- Foods require authentication because custom foods are private. Responses contain shared foods and the requester's own custom foods only. Another user's custom food returns 404.
+- Calories are required for every food, including custom foods. Protein, carbohydrates, fat and fiber are optional and are returned as null when unknown, never as 0.
+- Each portion has a quantity and unit that describe it, such as 1 cup, and a referenceAmount with a referenceUnit (g or ml): the size of one portion in the food's nutrition reference unit. Conversions are defined per food and are never shared between foods.
+- The example shows a food measured per 100 g. A food measured in millilitres uses a 100 ml reference. The response states the reference quantity and unit.
+- Food categories: grains_and_breads, legumes_and_pulses, vegetables, fruits, meat_and_poultry, fish_and_seafood, eggs, dairy, nuts_and_seeds, fats_and_oils, beverages, sweets_and_desserts, snacks_and_fast_food, prepared_dishes, condiments_and_sauces, other.
+- Favorites follow the same rule: only shared foods and the user's own custom foods can be added.
 
 8.5 Meal Plans
 
@@ -304,7 +335,7 @@ POST| "/meal-plans"| Authenticated| Create a meal plan
 GET| "/meal-plans"| Authenticated| List user's meal plans
 GET| "/meal-plans/:planId"| Owner| Retrieve a meal plan
 PATCH| "/meal-plans/:planId"| Owner| Update a meal plan
-DELETE| "/meal-plans/:planId"| Owner| Delete a meal plan
+DELETE| "/meal-plans/:planId"| Owner| Archive a meal plan
 POST| "/meal-plans/:planId/meals"| Owner| Add a meal
 PATCH| "/meal-plans/:planId/meals/:mealId"| Owner| Update a meal
 DELETE| "/meal-plans/:planId/meals/:mealId"| Owner| Remove a meal
@@ -325,8 +356,9 @@ Example meal creation:
 
 {
   "name": "Breakfast",
+  "mealType": "breakfast",
   "scheduledTime": "08:00",
-  "dayOfWeek": 1
+  "daysOfWeek": [1, 2, 3, 4, 5, 6, 7]
 }
 
 Example food entry:
@@ -345,6 +377,11 @@ Rules:
 - Nutrition totals must be calculated or verified by the backend.
 - Updating a plan must not silently modify unrelated historical food logs.
 - Plan changes must be handled consistently with reminder scheduling.
+- DELETE on a meal plan archives it, so previous plans and their history are preserved. Plan data is permanently removed only for an explicit privacy request.
+- daysOfWeek is a list of ISO weekday numbers (1 is Monday, 7 is Sunday) with no duplicates. All seven days means a daily meal. A meal repeats on these days between the plan's start and end dates.
+- mealType is breakfast, lunch, dinner or snack.
+- A meal entry may use only shared foods and the user's own custom foods.
+- Changing a meal's time or days, or the plan's dates, updates the reminders linked to that meal. Archiving a plan disables them.
 
 8.6 Food Tracking and Daily Nutrition
 
@@ -357,6 +394,10 @@ GET| "/food-logs/:logId"| Owner| Retrieve a specific log
 PATCH| "/food-logs/:logId"| Owner| Update a food log
 DELETE| "/food-logs/:logId"| Owner| Delete a food log
 GET| "/nutrition/daily-summary"| Authenticated| Retrieve daily nutrition summary
+POST| "/meal-logs"| Authenticated| Mark a planned meal completed or skipped for a date
+GET| "/meal-logs"| Authenticated| Retrieve meal logs
+PATCH| "/meal-logs/:mealLogId"| Owner| Change a meal log status
+DELETE| "/meal-logs/:mealLogId"| Owner| Remove a meal log
 
 Example food log:
 
@@ -367,6 +408,16 @@ Example food log:
   "consumedAt": "2026-12-01T08:30:00+05:00",
   "mealType": "breakfast"
 }
+
+Example meal log:
+
+{
+  "mealId": "meal-001",
+  "logDate": "2026-12-01",
+  "status": "skipped"
+}
+
+The meal log endpoints are proposed contracts. Their exact request shape is finalized when they are implemented.
 
 Daily summary request:
 
@@ -400,6 +451,11 @@ Rules:
 - Use a consistent timezone strategy for daily summaries.
 - Do not assume a user consumed a meal simply because it was scheduled.
 - Clearly distinguish estimated nutrition from verified values.
+- A food log may reference only shared foods and the user's own custom foods. Another user's custom food returns 404.
+- mealType is optional and groups food that was not part of a plan. mealLogId optionally links a food log to the planned meal it was eaten for, including a replacement meal.
+- A meal has at most one meal log per date. Status is completed or skipped.
+- Unknown nutrient values are never counted as zero. When any contributing entry has an unknown value for a nutrient, that nutrient's daily total is marked incomplete and is not presented as exact. The exact response field is defined when the endpoint is implemented.
+- Targets are calculated on demand once the calculation method is approved and are not stored.
 
 8.7 Workout and Exercise Management
 
@@ -417,12 +473,13 @@ POST| "/workout-sessions"| Authenticated| Record workout session
 GET| "/workout-sessions"| Authenticated| Retrieve workout history
 GET| "/workout-sessions/:sessionId"| Owner| Retrieve session details
 PATCH| "/workout-sessions/:sessionId"| Owner| Update session
+GET| "/users/me/workout-availability"| Authenticated| Retrieve weekly workout availability windows
+PUT| "/users/me/workout-availability"| Authenticated| Replace workout availability windows
 
 Example workout plan:
 
 {
   "name": "Beginner Strength Plan",
-  "daysPerWeek": 3,
   "description": "A beginner-friendly workout plan"
 }
 
@@ -430,6 +487,7 @@ Example workout session:
 
 {
   "workoutPlanId": "plan-001",
+  "scheduledAt": "2026-12-01T17:00:00+05:00",
   "startedAt": "2026-12-01T17:00:00+05:00",
   "completedAt": "2026-12-01T18:00:00+05:00",
   "status": "completed"
@@ -440,15 +498,22 @@ Rules:
 - Validate exercise references.
 - Validate sets, repetitions, duration, and other exercise-specific values.
 - Users can access only their own workout records.
-- Historical workout sessions should remain available when a plan is edited or deleted.
+- Historical workout sessions should remain available when a plan is edited or deleted. Deleting a plan keeps its sessions without a plan link.
+- scheduledAt is the planned time and startedAt is the actual start. Both are optional, subject to the status rules below.
+- planned: scheduledAt is required, and startedAt and completedAt are empty.
+- completed: completedAt is required, scheduledAt and startedAt are optional, and completedAt is not before startedAt.
+- skipped or cancelled: scheduledAt is required, and startedAt and completedAt are empty.
+- Rescheduling a planned session changes its scheduledAt. Completing a planned session keeps its scheduledAt.
+- A session can reference only the user's own plans. The API has no deletion of sessions; a session is cancelled or skipped instead.
+- Repetitions mean repetitions per set, both in plans and in recorded exercises.
+- Exercise categories: strength, cardio, flexibility, mobility, balance, sports, other. Difficulty: beginner, intermediate, advanced.
+- Availability windows have a day of the week (ISO 1 to 7), a start time and an end time on the same day, with start before end. Several windows are allowed on the same day. Overlapping windows are rejected.
 
 8.8 Notifications and Reminders
 
 Base path: "/notifications"
 
 Method| Endpoint| Access| Purpose
-GET| "/notifications"| Authenticated| Retrieve notifications
-PATCH| "/notifications/:notificationId/read"| Owner| Mark notification as read
 GET| "/reminders"| Authenticated| Retrieve reminders
 POST| "/reminders"| Authenticated| Create reminder
 PATCH| "/reminders/:reminderId"| Owner| Update reminder
@@ -466,6 +531,17 @@ Example reminder:
   "enabled": true
 }
 
+Example custom reminder:
+
+{
+  "title": "Drink water",
+  "type": "custom",
+  "scheduledTime": "11:00",
+  "repeatDays": [1, 2, 3, 4, 5],
+  "startDate": "2026-12-01",
+  "enabled": true
+}
+
 Rules:
 
 - Respect the user's timezone and notification preferences.
@@ -474,6 +550,15 @@ Rules:
 - Do not guarantee delivery when a device is offline or a push service is unavailable.
 - Keep reminder scheduling separate from notification delivery.
 - Store delivery status where required.
+- type is meal, workout or custom. An optional mealId (meal reminders) or workoutSessionId (workout reminders) links the reminder to the user's own meal or session. A custom reminder has no link. A link to another user's meal or session returns 404.
+- repeatDays are ISO weekday numbers (1 is Monday, 7 is Sunday) with no duplicates and at least one day. startDate is required for reminders without a link, and endDate is optional. A one-off reminder has the same startDate and endDate.
+- enabled defaults to false. A reminder fires only after the user explicitly enables it.
+- A reminder linked to a meal or session follows its schedule. Its scheduledTime, repeatDays, startDate and endDate are read-only and change only when the meal or session changes. Its title and enabled flag can be edited. Reminders without a link are fully editable.
+- Meal and workout reminders also require the matching switch in the notification preferences (both off by default). Custom reminders depend only on their own enabled flag.
+- A reminder that falls inside the user's quiet hours is skipped and is never sent late.
+- Reminders require the profile timeZone. Duplicate occurrences are prevented.
+- Notification preferences contain the meal and workout reminder switches and optional quiet hours. The time zone is a profile setting.
+- The in-app notification inbox ("/notifications" and marking notifications as read) is deferred and is not part of the MVP.
 
 8.9 Progress Tracking
 

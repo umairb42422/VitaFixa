@@ -4,6 +4,7 @@ High-Level Design (HLD)
 
 Document Version: 1.0
 Status: Initial System Design
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 Product: VitaFixa
 Related Documents:
 
@@ -402,12 +403,13 @@ It must not directly modify the Notification module's database tables.
 2. User enables reminders.
 3. Nutrition module requests reminder scheduling.
 4. Notification module validates the schedule.
-5. Reminder information is stored.
-6. Background processing handles due reminders.
-7. Notification provider attempts delivery.
-8. Delivery outcome is recorded where supported.
+5. A Reminder rule is stored (disabled unless the user enables it). A linked reminder mirrors the meal's time, selected weekdays and plan dates.
+6. A background job creates ScheduledReminder occurrences for a short rolling window ahead.
+7. Background processing handles due occurrences. An occurrence due inside quiet hours is marked suppressed and is not sent later.
+8. Notification provider attempts delivery.
+9. Delivery outcome is recorded where supported.
 
-Changing or deleting a meal schedule must update its related reminders.
+Changing or deleting a meal schedule must update its related reminders. The reminder rule is updated in the same transaction as the meal, and pending occurrences are cancelled and regenerated. Custom reminders are standalone rules that depend only on their own enabled setting. Details are in ADR-003 section 2.4.
 
 6.5 Workout Workflow
 
@@ -453,7 +455,6 @@ Web and mobile applications will use the same REST API.
 7.2 Main API Groups
 
 API group| Example responsibility
-"/api/v1/auth"| Authentication-related integration
 "/api/v1/users"| User profile
 "/api/v1/nutrition"| Nutrition operations
 "/api/v1/foods"| Food search

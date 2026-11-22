@@ -177,6 +177,8 @@ Before production implementation, the team must finalize:
 
 These details must be verified before production credentials or real user data are introduced.
 
+Amendment (2026-11-23): Amended by ADR-002 (authentication and authorization) and ADR-003 (database schema and access), which resolve token validation, Row Level Security, the Prisma connection configuration and the migration workflow. Hosting and deployment configuration remain open. No technology decision in this ADR has changed.
+
 8. Review Conditions
 
 This decision should be reviewed if:

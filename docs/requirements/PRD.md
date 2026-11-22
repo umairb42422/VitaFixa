@@ -4,6 +4,7 @@ Product Requirements Document (PRD)
 
 Document Version: 1.0
 Status: Initial Product Requirements Baseline
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 Product Name: VitaFixa
 Product Category: Fitness, Nutrition and Wellness Platform
 Target Platforms: Web, Android and iOS
@@ -144,6 +145,8 @@ Acceptance criteria:
 - Users must only access their authorized information.
 - Account recovery must follow a secure verification process.
 
+Implementation note: account creation, login, logout and account recovery are provided by Supabase Auth, which the web and mobile applications call directly. The backend verifies access tokens and does not handle passwords (ADR-002).
+
 4.2 User Onboarding and Profile
 
 Module: User Profile
@@ -159,7 +162,7 @@ Requirements:
 - FR-PRO-007: Users must be able to provide relevant information required by validated calorie estimation methods.
 - FR-PRO-008: Users must be able to specify food preferences and allergies.
 - FR-PRO-009: Users must be able to update their profile information.
-- FR-PRO-010: Users must be able to configure their workout availability.
+- FR-PRO-010: Users must be able to configure their workout availability as weekly time windows. A user can add several windows on the same day, for example Monday 8:00 to 10:00 and 17:00 to 19:00. Each window has a start time and an end time on the same day.
 
 Acceptance criteria:
 
@@ -239,7 +242,7 @@ Requirements:
 - FR-MEAL-007: Users must be able to set meal times.
 - FR-MEAL-008: Users must be able to edit meal plans.
 - FR-MEAL-009: Users must be able to delete meal plans or individual meals.
-- FR-MEAL-010: Users should be able to create repeating daily or weekly schedules.
+- FR-MEAL-010: Users must be able to create repeating daily or weekly schedules by selecting the days of the week on which each meal occurs.
 - FR-MEAL-011: Users should be able to replace a planned food item.
 - FR-MEAL-012: Users should be able to manage multiple meal plans.
 
@@ -318,8 +321,12 @@ Requirements:
 - FR-NOT-004: Users must be able to enable or disable reminders.
 - FR-NOT-005: Users must be able to configure notification preferences.
 - FR-NOT-006: Users should be able to configure quiet hours.
-- FR-NOT-007: Users should be able to respond to reminders where supported.
+- FR-NOT-007: Users should be able to respond to reminders where supported. This is planned for a later release and is not part of the MVP.
 - FR-NOT-008: The system must handle changed or deleted schedules appropriately.
+- FR-NOT-009: The system must support custom reminders created by the user, in addition to meal and workout reminders.
+- FR-NOT-010: Users must be able to set a reminder to occur once or to repeat on selected days of the week.
+- FR-NOT-011: Reminders must be disabled by default until the user explicitly enables them.
+- FR-NOT-012: A reminder linked to a meal or a workout session must follow the schedule of that meal or session.
 
 Example:
 
@@ -339,6 +346,8 @@ Acceptance criteria:
 - Disabled reminders must not generate scheduled notifications.
 - Rescheduling a meal must update its reminder.
 - Duplicate reminders should be prevented.
+- Reminders that fall inside the user's quiet hours are skipped. They are not sent late.
+- Custom reminders depend only on their own enabled setting. The meal and workout reminder settings do not affect them.
 
 4.9 Progress Monitoring and Analytics
 
@@ -549,7 +558,7 @@ The initial MVP should include:
 7. Daily food tracking.
 8. Basic nutritional summaries.
 9. Basic workout planning.
-10. Meal and workout reminders.
+10. Meal, workout and custom reminders.
 11. Basic progress history.
 12. Responsive web application.
 13. Android application foundation.
