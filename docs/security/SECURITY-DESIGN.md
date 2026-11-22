@@ -4,6 +4,7 @@ Document: Security Design
 Project: VitaFixa
 Version: 1.0
 Status: Initial Design
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 Security Approach: Defense in Depth
 
 ---
@@ -103,7 +104,7 @@ Authentication responsibilities must be clearly separated from application autho
 - The application must never store plaintext passwords.
 - Authentication tokens must be validated by the backend.
 - Expired or invalid sessions must be rejected.
-- Logout must invalidate or terminate the appropriate session.
+- Logout must terminate the appropriate session in Supabase Auth. A stateless access token stays valid until it expires, so the backend rechecks the session with Supabase Auth for sensitive operations (ADR-002).
 - Password reset and account recovery must use secure provider-supported flows.
 - Authentication errors must not expose sensitive account information.
 
@@ -129,7 +130,7 @@ The backend must not trust an unverified JWT payload.
 - Clear locally stored session information during logout.
 - Handle expired sessions safely.
 
-The exact session strategy must be finalized before implementation for both web and mobile clients.
+The backend API accepts only a Bearer access token in the Authorization header. It does not read authentication cookies, so cookie-based CSRF protection is not required for the API itself. The exact client-side session storage and token lifetimes must still be finalized for web and mobile clients.
 
 6. Authorization and Access Control
 
@@ -154,6 +155,10 @@ Examples:
 - Preferences.
 
 A user must never access another user's private data by changing a resource ID in an API request.
+
+The owner of a record is resolved on the server from the verified token (the Supabase user id in the token's sub claim, mapped to the profile id) and never from client input. No request body, query, path or header may supply an owner id. A request for another user's resource returns 404 (ADR-002, ADR-003 section 2.5.2).
+
+Custom foods are visible only to their creator. Other foods are shared and read-only (ADR-003 section 2.5.1).
 
 6.2 Role-based access control
 
@@ -182,17 +187,11 @@ Database security must include multiple layers of protection.
 
 7.1 Row Level Security (RLS)
 
-RLS must be enabled and correctly configured for tables containing user-owned private information.
+RLS is enabled on every table with no permissive policies (deny by default), and the Supabase data API is turned off, so clients cannot read or write tables directly. All access goes through the backend (ADR-002 and ADR-003 section 2.7).
 
-Policies must ensure that:
+The backend's runtime database role bypasses RLS. RLS therefore protects against direct client access and does not protect against a faulty backend query. Per-user policies are not part of the MVP; if the data API is ever enabled, policies must be designed, reviewed and tested first.
 
-- Users can read only authorized records.
-- Users can create records only for their own account.
-- Users can update only records they own.
-- Users cannot delete another user's records.
-- Administrative access follows separately controlled permissions.
-
-RLS policies must be tested independently.
+RLS deny-by-default must be tested independently.
 
 7.2 Backend authorization
 
@@ -202,6 +201,7 @@ The NestJS backend must independently verify user identity and resource ownershi
 
 7.3 Database access
 
+- Use two dedicated database roles: a runtime role (vitafixa_app) that cannot change the schema and has no access to the Supabase auth schema, and a migration role (vitafixa_migrator) used only to apply migrations (ADR-003 section 2.9).
 - Use Prisma or approved parameterized database access.
 - Avoid unsafe raw SQL.
 - Restrict database permissions.
@@ -326,7 +326,7 @@ Secrets include:
 
 - Supabase service-role keys.
 - Database credentials.
-- JWT-related secrets.
+- JWT-related secrets, if any are ever introduced. The backend verifies Supabase tokens with public keys (JWKS), so no JWT signing secret is stored.
 - AI provider API keys.
 - Email service credentials.
 - Payment provider credentials in future phases.

@@ -3,6 +3,7 @@ VitaFixa — Testing Strategy
 Project: VitaFixa
 Document Type: Software Testing Strategy
 Status: Initial Version
+Reconciled with: ADR-002 and ADR-003 (2026-11-23)
 
 ---
 
@@ -187,12 +188,11 @@ Final tool selection should remain consistent with the approved technology archi
 
 Authentication Module
 
-- Valid registration.
-- Invalid registration.
-- Login with correct credentials.
-- Login with incorrect credentials.
-- Session expiration.
-- Unauthorized access.
+Registration, login and logout are performed by Supabase Auth and are not backend functions (ADR-002). Backend tests cover:
+
+- Valid, expired, invalid and missing access tokens.
+- Unauthorized access to protected routes and public access to routes marked @Public.
+- Token-to-profile mapping: a first request from a new user creates exactly one profile, including when two requests arrive at once.
 
 User Profile Module
 
@@ -243,6 +243,19 @@ AI Module
 - Safe fallback to manual functionality.
 
 AI-related failures must not prevent users from accessing essential manual planning features.
+
+Database Schema and Migration Testing (ADR-003 section 2.10)
+
+- Migrations apply to an empty database.
+- Each CHECK, unique and foreign key rule rejects invalid data, including: referenceUnit limited to g and ml; portion unit consistency; nutrient values not negative; workout session status and timestamp combinations; quiet hours; reminder type and link rules.
+- The weekday function accepts and rejects the documented cases, including NULL elements and duplicates.
+- Nutrient nullability: calories are required, other nutrients accept NULL, and unknown is never stored or returned as zero.
+- RLS denies the client-facing roles.
+- Composite ownership keys reject a meal under another user's plan, a reminder linked to another user's meal or session, and a session linked to another user's plan.
+- Ownership: two different tokens never see each other's data, another user's id in a body, query or header is ignored or rejected, and another user's resource returns 404.
+- Food access rule: food logs, meal entries and favorites cannot reference another user's custom food; search and portion listing return only shared foods and the requester's own.
+- Reminders: after each meal or session change, a linked reminder equals its source; quiet hours mark occurrences suppressed instead of sending late; disabled reminders and reminders of a user without a time zone create no occurrences; custom reminders ignore the meal and workout switches.
+- Constraint tests run against a local or CI PostgreSQL when available, otherwise against the development project only.
 
 8. Regression Testing
 
