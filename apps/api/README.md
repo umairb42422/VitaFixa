@@ -1,7 +1,7 @@
 # VitaFixa API (backend)
 
 NestJS + TypeScript **modular monolith** (ADR-001, LLD.md sections 3-4). This folder currently holds the
-**structure and database foundation only**. No business features, endpoints, auth or NestJS bootstrap exist yet.
+**structure, a bootable NestJS shell and the database foundation**. No business features, auth or database models exist yet.
 
 ## Folder guide
 
@@ -23,7 +23,16 @@ Each module uses four layers (inner layers never import outer ones):
 - `infrastructure/` Prisma repositories and adapters.
 - `presentation/` thin REST controllers and request/response DTOs.
 
-Not yet created, because they need an approved task: `main.ts`, `app.module.ts`, per-module `*.module.ts`.
+Application shell: `src/main.ts` (global prefix `api/v1`, port from `PORT`, default 3000), `src/app.module.ts`
+(imports the nine empty module classes plus `common/health`). Each `*.module.ts` is an empty placeholder.
+
+Endpoint: `GET /api/v1/health` returns `{ "status": "ok" }` (public). `/health/ready` and `/health/live` are
+specified as internal/authorized and are deferred until authentication exists.
+
+```sh
+pnpm start:dev   # or: pnpm build && pnpm start:prod
+pnpm test        # unit tests; pnpm test:e2e for the HTTP test
+```
 
 ## Database foundation
 
@@ -39,7 +48,9 @@ pnpm test:structure     # works offline
 
 ## Unresolved decisions (need human approval, not invented here)
 
-1. **Prisma major version.** `^6` assumed; no lockfile yet (install was not possible offline). Prisma 7 changes configuration.
+1. **Prisma major version.** Neither ADR-001 nor DATABASE-DESIGN.md names one. `^6` is a provisional placeholder awaiting approval (see the Task 4 report). Not installed or validated: no network, no lockfile.
+1a. **NestJS/Jest/TypeScript versions** (`^11`, `^29`, `^5.7`) are unverified placeholders; the docs name the products, not versions. Nothing has been installed or compiled yet.
+1b. **Health controller location** (`src/common/health/`) is my choice; the LLD has no health folder.
 2. **Supabase connection setup.** ADR-001 section 7 leaves it open: pooled vs direct URL (`directUrl`) for migrations, SSL, and shadow database.
 3. **Migration ownership/workflow** (who runs migrations, staging/production process, rollback).
 4. **Physical schema** (DATABASE-DESIGN.md sections 4-5): enum vs string types for status/type fields, decimal precision, units (store as given vs normalize to cm/kg), UUID generation, `onDelete` behavior, nutritional snapshots for FoodLog, account-deletion/retention policy. Hence no models yet.
