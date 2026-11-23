@@ -154,6 +154,7 @@ Additional entities may be introduced when approved requirements need them.
 
 The following diagram describes the initial logical database relationships.
 
+```mermaid
 erDiagram
     USER_PROFILE ||--o{ FITNESS_GOAL : has
     USER_PROFILE ||--o{ FOOD_PREFERENCE : selects
@@ -201,6 +202,7 @@ erDiagram
     USER_PROFILE ||--o{ PROGRESS_GOAL : tracks
 
     RESEARCH_SOURCE ||--o{ RESEARCH_ARTICLE : supports
+```
 
 This is a logical ERD. The approved physical schema, column types, constraints and delete rules are defined in ADR-003.
 
@@ -1028,4 +1030,4 @@ Final Database Principle
 
 VitaFixa's database must protect user information, maintain reliable history and support future growth.
 
-Every entity must have a clear purpose, every relationship must be intentional and every schema change must be controll
+Every entity must have a clear purpose, every relationship must be intentional and every schema change must be controlled.

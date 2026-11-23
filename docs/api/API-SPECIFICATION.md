@@ -513,6 +513,8 @@ Rules:
 
 Base path: "/notifications"
 
+The base path covers reminders and notification preferences only. There is no notification inbox endpoint in the MVP.
+
 Method| Endpoint| Access| Purpose
 GET| "/reminders"| Authenticated| Retrieve reminders
 POST| "/reminders"| Authenticated| Create reminder
@@ -558,7 +560,7 @@ Rules:
 - A reminder that falls inside the user's quiet hours is skipped and is never sent late.
 - Reminders require the profile timeZone. Duplicate occurrences are prevented.
 - Notification preferences contain the meal and workout reminder switches and optional quiet hours. The time zone is a profile setting.
-- The in-app notification inbox ("/notifications" and marking notifications as read) is deferred and is not part of the MVP.
+- The in-app notification inbox (listing notifications and marking them as read) is deferred and is not part of the MVP. It needs its own storage and an approved design before it is added.
 
 8.9 Progress Tracking
 
